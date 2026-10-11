@@ -78,6 +78,7 @@ _DERIVED_DETAIL_KEYS = frozenset(
         "execution_role",
         "role_owner",
         "dispatch_share",
+        "terminal_share",
         "deprecated",
         "gated_off",
         "loop_line",

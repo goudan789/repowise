@@ -119,6 +119,9 @@ class FunctionComplexity:
     # CCN points inside that dispatch's heaviest arm, its own case point not
     # counted: a switch of one-line cases has 0.
     dispatch_arm: int = 0
+    # Calls on the terminal (print, prompt, console, stdout) over all calls in
+    # the body, nested bodies included, to two decimals. ``complexity/terminal.py``.
+    terminal_share: float = 0.0
     # True when the declaration is marked deprecated or the body's top level
     # issues a deprecation warning. ``complexity/deprecation.py``.
     deprecated: bool = False

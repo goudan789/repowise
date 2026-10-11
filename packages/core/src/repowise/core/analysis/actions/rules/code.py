@@ -387,7 +387,10 @@ def fix_concentration(facts: RepoFacts, ctx: RepoContext) -> RuleOutcome:
 
     Told as an area of work rather than a list of files, because that is how a
     lead plans it. The deepest folder that still clears the share wins, so the
-    answer is `update_cmd/`, not `packages/`.
+    answer is `update_cmd/`, not `packages/`. The title names where to start:
+    the first step of its most fixed fragile file. A folder with no such step
+    is left out and counted in the outcome's reason, and its files keep their
+    own rows.
     """
     rule = "fix_concentration"
     if "files" in facts.unavailable:
@@ -438,6 +441,7 @@ def fix_concentration(facts: RepoFacts, ctx: RepoContext) -> RuleOutcome:
             continue
         chosen.append(folder)
     actions = []
+    no_step = 0
     for folder in chosen[:CONCENTRATION_MAX_ACTIONS]:
         n = len(shas_per_folder[folder])
         share = round(100 * n / total)
@@ -447,20 +451,21 @@ def fix_concentration(facts: RepoFacts, ctx: RepoContext) -> RuleOutcome:
         includes = tuple(
             p for p in members if is_fragile(production[p], ctx) and p not in named
         )
+        first = _first_step(includes, production)
+        if first is None:
+            no_step += 1
+            continue
         actions.append(
             Action(
                 rule=rule,
                 tier="plan",
                 horizons=("quarter",),
                 severity="high",
-                title=(
-                    f"Stabilise {code(folder + '/')}: {share}% of the bug fixes land in "
-                    f"its {plural(files_per_folder[folder], 'file')}"
-                ),
+                title=f"Stabilise {code(folder + '/')}: first, {first}",
                 impact=(
-                    f"{n} of the {total} bug-fix commits in the last 90 days touched "
-                    f"this folder, which holds {files_per_folder[folder] / n_prod:.1%} "
-                    "of the production files."
+                    f"{n} of the {total} bug-fix commits in the last 90 days ({share}%) "
+                    f"touched this folder's {plural(files_per_folder[folder], 'file')}, "
+                    f"{files_per_folder[folder] / n_prod:.1%} of the production files."
                 ),
                 why=(
                     WhyFact("share of bug-fix commits", f"{share}%"),
@@ -503,7 +508,19 @@ def fix_concentration(facts: RepoFacts, ctx: RepoContext) -> RuleOutcome:
                 ),
             )
         )
-    return RuleOutcome(rule, "evaluated", "", tuple(actions))
+    reason = f"{plural(no_step, 'folder')} left out: no file in it names a first step." if no_step else ""
+    return RuleOutcome(rule, "evaluated", reason, tuple(actions))
+
+
+def _first_step(includes: tuple[str, ...], production: dict[str, FileFacts]) -> str | None:
+    """The first step of the most fixed file in ``includes`` that has one, as
+    a clause: ``simplify `run` in `a.py```."""
+    for path in includes:
+        step = _fragile_step(production[path])
+        if step is not None:
+            title = step[0].split(": ", 1)[0]
+            return title[0].lower() + title[1:]
+    return None
 
 
 def _ancestors(path: str) -> list[str]:

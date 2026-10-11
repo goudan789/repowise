@@ -30,8 +30,11 @@ from ..worth import (
     dispatch_shaped,
     dormant,
     execution_role,
+    large_function,
     lead_reason,
+    measured_nloc,
     perf_facets,
+    terminal_shaped,
 )
 
 Reason = Literal[
@@ -58,6 +61,8 @@ Reason = Literal[
     "unmeasured_cost",
     "cold_role",
     "background_unproven",
+    "terminal_flow",
+    "moderate_quiet",
 ]
 """Why a unit is out of a default queue. Each surface counts the subset its
 ladders can produce (``fix_first.model.FIX_EXCLUSIONS``,
@@ -270,14 +275,14 @@ class UnitFacts(Protocol):
 
     def cloned(self, path: str, shape: Mapping[str, int]) -> bool: ...
 
+    def evidence(self, path: str, symbol: str | None) -> bool: ...
+
 
 def small(shape: Mapping[str, int]) -> bool:
     """Under both size floors. A function whose size findings carry no line
     count is measured by its span, which bounds its code lines from above; one
     with neither is not judged small."""
-    nloc = shape.get("nloc")
-    if not nloc and shape.get("start") and shape.get("end"):
-        nloc = shape["end"] - shape["start"] + 1
+    nloc = measured_nloc(shape)
     if not nloc:
         return False
     return nloc < SMALL_NLOC and shape.get("ccn", 0) < SMALL_CCN
@@ -292,6 +297,9 @@ def unit_verdict(
     way out, and a dormant one does not run. A complexity unit on a function
     that is mostly one dispatch on one value is usually fine as it is, unless
     a duplicate also sits in it; one on a small function is not worth an item.
+    A print or prompt flow branches on what to show, so splitting it buys
+    little. A function under :func:`worth.large_function` leads only on
+    evidence that it costs something: it changes often or fixes land there.
     """
     if facts.unreachable(path, symbol, line):
         return Verdict("unreachable")
@@ -306,7 +314,17 @@ def unit_verdict(
         return Verdict("inherent_dispatch")
     if small(shape):
         return Verdict("small_function")
+    if terminal_shaped(shape):
+        return Verdict("terminal_flow")
+    if _measured(shape) and not large_function(shape) and not facts.evidence(path, symbol):
+        return Verdict("moderate_quiet")
     return ELIGIBLE
+
+
+def _measured(shape: Mapping[str, int]) -> bool:
+    """Whether any size was measured: with none, there are no grounds to call
+    the function moderate."""
+    return bool(shape.get("ccn") or measured_nloc(shape))
 
 
 def refactor_verdict(

@@ -17,6 +17,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Literal
 
 from .complexity.dispatch import DISPATCH_SHARE
+from .complexity.terminal import TERMINAL_SHARE
 from .rows import detail_map, field
 
 #: Problem-size cut points. Each is a multiple of the detector's own bar: CCN
@@ -120,6 +121,7 @@ def measure(findings: Iterable[Any]) -> dict[str, int]:
     ``deprecated`` when any sits in a function marked deprecated,
     ``gated_off`` when any sits in a :func:`dormant` function,
     ``dispatch_pct`` is the largest stored dispatch share in percent,
+    ``terminal_pct`` the largest stored terminal share (``complexity/terminal.py``),
     ``start`` / ``end`` span the function as its size findings place it, and
     ``deep_start`` / ``deep_end`` are its deepest nested block's lines.
     """
@@ -136,9 +138,10 @@ def measure(findings: Iterable[Any]) -> dict[str, int]:
         if isinstance(deepest, dict) and deepest.get("start") and "deep_start" not in shape:
             shape["deep_start"] = int(deepest["start"])
             shape["deep_end"] = int(deepest.get("end") or deepest["start"])
-        share = details.get("dispatch_share")
-        if isinstance(share, (int, float)):
-            shape["dispatch_pct"] = max(shape.get("dispatch_pct", 0), round(share * 100))
+        for key, pct in (("dispatch_share", "dispatch_pct"), ("terminal_share", "terminal_pct")):
+            share = details.get(key)
+            if isinstance(share, (int, float)):
+                shape[pct] = max(shape.get(pct, 0), round(share * 100))
         if field(f, "biomarker_type") in SIZE_MARKERS:
             start, end = field(f, "line_start"), field(f, "line_end")
             if start and end:
@@ -165,6 +168,27 @@ def dispatch_shaped(shape: Mapping[str, int]) -> bool:
     return shape.get("dispatch_pct", 0) >= DISPATCH_SHARE * 100
 
 
+def terminal_shaped(shape: Mapping[str, int]) -> bool:
+    """The function is a print or prompt flow: a status report, a checklist,
+    a setup wizard, whose branches choose what to show."""
+    return shape.get("terminal_pct", 0) >= TERMINAL_SHARE * 100
+
+
+def measured_nloc(shape: Mapping[str, int]) -> int:
+    """The function's code lines; with none stored, its span, which bounds
+    them from above; 0 with neither."""
+    nloc = shape.get("nloc") or 0
+    if not nloc and shape.get("start") and shape.get("end"):
+        nloc = shape["end"] - shape["start"] + 1
+    return nloc
+
+
+def large_function(shape: Mapping[str, int]) -> bool:
+    """Big enough to lead on size alone: CCN 80 or 200 lines. Nesting does not
+    count here: a deep block in a short function is a small fix."""
+    return shape.get("ccn", 0) >= SIZE_CCN[2] or measured_nloc(shape) >= SIZE_NLOC[1]
+
+
 #: Nesting this share of the CCN or more is one else-if or ternary chain,
 #: each arm nested in the last: deep by count, flat to read.
 CHAIN_SHARE = 0.8
@@ -178,10 +202,7 @@ def _chained(shape: Mapping[str, int]) -> bool:
 def worth_size(shape: Mapping[str, int]) -> int:
     """:func:`magnitude` with nesting under 8 counted only in a function past
     the length bar: moderate depth in a short function is a small fix."""
-    nloc = shape.get("nloc") or 0
-    if not nloc and shape.get("start") and shape.get("end"):
-        nloc = shape["end"] - shape["start"] + 1
-    if nloc >= SIZE_NLOC[0] or shape.get("max_nesting", 0) >= SIZE_NESTING[2]:
+    if measured_nloc(shape) >= SIZE_NLOC[0] or shape.get("max_nesting", 0) >= SIZE_NESTING[2]:
         return magnitude(shape)
     return magnitude({**shape, "max_nesting": 0})
 
@@ -344,10 +365,13 @@ __all__ = [
     "dormant",
     "execution_role",
     "finding_priorities",
+    "large_function",
     "lead_reason",
     "low_priority",
     "magnitude",
     "measure",
+    "measured_nloc",
     "perf_facets",
+    "terminal_shaped",
     "worth_size",
 ]

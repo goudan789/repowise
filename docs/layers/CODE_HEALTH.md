@@ -99,6 +99,10 @@ Left out, and counted with a reason:
 - kinds that reviewers found not worth doing
 - code a sure dead-code finding covers (the fix is to delete it)
 - dormant functions, which a constant flag switches off
+- print and prompt flows (status reports, checklists, setup wizards), whose
+  branches choose what to show
+- functions under CCN 80 and 200 lines whose file rarely changes and has no bug
+  fixes; they stay in the refactoring list
 
 A function is dormant when its body opens with `if not FLAG: return ...` (or is one
 `if FLAG:` block) and `FLAG` is a module-level `False`, `0` or `None` (`const FLAG =
@@ -110,7 +114,8 @@ outside with `setattr` or a test's monkeypatch, still reads as off.
 Items rank by value first (how far the code sits past size and complexity bars,
 one step more in a widely imported file), then by tier. Within a value, the
 complexity a fix removes times how widely the file is imported decides, so a
-4,000-line loop outranks a long print routine. A performance fix ranks by what runs
+4,000-line loop outranks a long print routine. A function under a twentieth of a
+very large file counts only its share of that file's importers. A performance fix ranks by what runs
 it: a request or message handler, then a scheduled job, then code with no role
 evidence. No kind takes more than 3 of the first 5 places while another has work
 worth doing.
@@ -142,6 +147,8 @@ snoozing a row takes effect at once.
 
 A fragile file asks for tests only when no measured coverage and no test in the
 code graph reaches it; otherwise the row asks you to simplify its lead function.
+A folder where bug fixes concentrate names its first step, the most fixed file's,
+or is left out.
 An index with fewer than five commits leaves out the rows ranked by history.
 
 ```bash

@@ -77,6 +77,7 @@ from repowise.core.analysis.health.queue.eligibility import (
 )
 from repowise.core.analysis.health.queue.order import LEVEL_RANK, order
 from repowise.core.analysis.health.queue.value import (
+    function_reach,
     perf_confidence,
     perf_ready,
     perf_value,
@@ -98,6 +99,7 @@ from repowise.core.analysis.health.worth import (
     low_priority,
     magnitude,
     measure,
+    measured_nloc,
     worth_size,
 )
 from repowise.core.analysis.next_call import ActionCommand
@@ -135,6 +137,13 @@ SIZE_BREAK_UP = WORTH_MAGNITUDE
 #: A file in the top fifth of production files by dependents is central (one
 #: value step); by churn it changes often (orders within a band only).
 HOT_QUANTILE = 0.8
+#: One change in 90 days is not changing often, even where most files changed
+#: once (a shallow clone, a young repository).
+MIN_CHURN_COMMITS = 2
+#: History that shows a function costs something: bug fixes in its file, or
+#: the function changing more than most in the repository.
+FIX_HISTORY_MARKER = "prior_defect"
+HOTSPOT_MARKER = "function_hotspot"
 MAX_FACTS = 5
 MAX_TESTS = 5
 MAX_STEPS = 5
@@ -164,6 +173,11 @@ class _Unit:
     #: False for a performance cause whose marker has not cleared the bar for
     #: leading (``opportunity_rank.may_lead``): listed, never first.
     may_lead: bool = True
+
+
+def _tail(symbol: str | None) -> str | None:
+    """A symbol's own name: ``a.py::Cls.run`` and ``Cls::run`` read ``run``."""
+    return re.split(r"::|\.", symbol)[-1] if symbol else None
 
 
 def _open(row: Any) -> bool:
@@ -302,7 +316,30 @@ class _Files:
         return (self.dependents(path) or 0) >= self.deps_cut
 
     def churning(self, path: str) -> bool:
-        return self.commits(path) >= self.churn_cut
+        return self.commits(path) >= max(self.churn_cut, MIN_CHURN_COMMITS)
+
+    def evidence(self, path: str, symbol: str | None) -> bool:
+        """Whether history shows work on ``symbol`` pays: its file changes
+        often or has bug fixes, or the function itself is a hotspot."""
+        if self.churning(path):
+            return True
+        tail = _tail(symbol)
+        return any(
+            (marker := field(f, "biomarker_type")) == FIX_HISTORY_MARKER
+            or (marker == HOTSPOT_MARKER and tail and _tail(field(f, "function_name")) == tail)
+            for f in self.history.get(path, ())
+        )
+
+    def reach(
+        self, path: str, shape: Mapping[str, int], dependents: int | None = None
+    ) -> tuple[int | None, bool]:
+        """The importers a function in ``path`` is credited with
+        (``queue.value.function_reach``), and whether that makes it central."""
+        deps = self.dependents(path) if dependents is None else dependents
+        credited = function_reach(deps, measured_nloc(shape), self.nloc(path))
+        if credited == deps:
+            return deps, self.central(path)
+        return credited, (credited or 0) >= self.deps_cut
 
     def shape(self, path: str, symbol: str | None) -> dict[str, int]:
         """The measured size of ``symbol`` in ``path``, from its findings."""
@@ -490,6 +527,9 @@ class _ShapeRank:
     gain: float
     ccn_removed: int
     dependents: int | None
+    #: The importers the value counts (``_Files.reach``): ``dependents``, or a
+    #: function's share of them in a file far larger than it.
+    credited: int | None
 
     @property
     def value(self) -> int:
@@ -509,7 +549,7 @@ class _ShapeRank:
             FixRankFact("health gain", f"{self.gain:.2f}"),
             FixRankFact("complexity removed", str(self.ccn_removed)),
             FixRankFact("problem size", str(size)),
-            *_reach_facts(self.dependents, self.central, self.churning),
+            *_reach_facts(self.dependents, self.central, self.churning, self.credited),
             FixRankFact("duplicate inside", "yes" if self.cloned else "no"),
         ]
 
@@ -519,18 +559,24 @@ def _finish_shaped(rank: _ShapeRank, **unit: Any) -> _Unit:
     return _finish(
         value=rank.value,
         cold_value=rank.cold_value,
-        worth=worth(removed(rank.ccn_removed, rank.gain), rank.dependents, rank.churning),
+        worth=worth(removed(rank.ccn_removed, rank.gain), rank.credited, rank.churning),
         low=rank.low,
         rank_inputs=rank.facts,
         **unit,
     )
 
 
-def _reach_facts(deps: int | None, central: bool, churning: bool) -> list[FixRankFact]:
+def _reach_facts(
+    deps: int | None, central: bool, churning: bool, credited: int | None
+) -> list[FixRankFact]:
     """What reach and history add: importers lift the band when central,
-    churn only orders inside it."""
+    churn only orders inside it. A function credited with only its share of
+    its file's importers says so."""
+    share = f", {credited} counted for its share of the file" if credited != deps else ""
     return [
-        FixRankFact("files that import it", f"{deps or 0}{' (top fifth)' if central else ''}"),
+        FixRankFact(
+            "files that import it", f"{deps or 0}{' (top fifth)' if central else ''}{share}"
+        ),
         FixRankFact("changes often", "yes" if churning else "no"),
     ]
 
@@ -798,15 +844,21 @@ class _RefactorPlan:
         lead_type, marker = _lead_kind(row, lead)
         shape = files.shape(path, lead.get("target_symbol"))
         deps = details.get("dependents")
+        deps = files.dependents(path) if deps is None else deps
+        function_size = lead_type == "extract_method"
+        credited, central = (
+            files.reach(path, shape, deps) if function_size else (deps, files.central(path))
+        )
         rank = _ShapeRank(
             shape,
-            files.central(path),
+            central,
             files.churning(path),
-            cloned=lead_type == "extract_method" and files.cloned(path, shape),
-            low=low_priority(marker, shape, function_size=lead_type == "extract_method"),
+            cloned=function_size and files.cloned(path, shape),
+            low=low_priority(marker, shape, function_size=function_size),
             gain=gain,
             ccn_removed=sum(_extraction_worth(plans.get(s.get("plan_id")))[0] for s in steps),
-            dependents=files.dependents(path) if deps is None else deps,
+            dependents=deps,
+            credited=credited,
         )
         return cls(
             row,
@@ -1246,16 +1298,20 @@ def _finding_rank(finding: Any, files: _Files) -> _ShapeRank:
     path = field(finding, "file_path")
     marker = field(finding, "biomarker_type") or ""
     shape = files.shape(path, field(finding, "function_name"))
+    deps = files.dependents(path)
+    sized = marker in SIZE_MARKERS
+    credited, central = files.reach(path, shape, deps) if sized else (deps, files.central(path))
     return _ShapeRank(
         shape,
-        files.central(path),
+        central,
         files.churning(path),
-        cloned=marker in SIZE_MARKERS and files.cloned(path, shape),
+        cloned=sized and files.cloned(path, shape),
         low=low_priority(marker, shape, error_kind=detail_map(finding).get("kind")),
         gain=_num(field(finding, "health_impact")),
         # Breaking up the whole function takes out its whole CCN.
-        ccn_removed=shape.get("ccn", 0) if marker in SIZE_MARKERS else 0,
-        dependents=files.dependents(path),
+        ccn_removed=shape.get("ccn", 0) if sized else 0,
+        dependents=deps,
+        credited=credited,
     )
 
 

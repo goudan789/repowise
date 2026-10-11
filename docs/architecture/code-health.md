@@ -683,10 +683,13 @@ reason. These reasons and the performance default queue's are decided in one pla
 | `no_concrete_step` | No first edit with a file and line or a named group |
 | `low_value_kind` | Low cohesion (0 of 46 accepted), long method (0 of 10), long parameter lists (0 of 2) |
 | `kind_unaudited` | Plans led by Extract Class (0 of 14 accepted) or Move Method (0 of 34), kept to the full list until each passes a per-language audit |
+| `terminal_flow` | A quarter or more of the function's calls print or prompt (`complexity/terminal.py`): a status report, checklist or setup wizard |
+| `moderate_quiet` | Under CCN 80 and 200 lines, in a file outside the top fifth by churn (or changed once), with no `prior_defect` in the file and no `function_hotspot` on the function |
 
 Order: value first (the larger of health recovered and size: CCN 20/40/80/150,
 lines 100/200/400/800, nesting 5/6/8, a critical or brain-method finding, one step
-more on a hot file); a performance fix's value is its cost, with production,
+more on a hot file, where a function under 5% of its file's lines is credited that
+share of the file's importers); a performance fix's value is its cost, with production,
 entry-reachable, data-growing DB or network calls in the top band. Then tier
 `now` / `next` / `later`, with at most `HEAD_PER_KIND` (3) of the first `HEAD` (5)
 places per kind. `worth.py` decides `later` for every default list: a function

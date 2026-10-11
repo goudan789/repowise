@@ -30,6 +30,7 @@ The whole-file passes share one descent of the tree (``file_scan``):
 - ``assertions``:     assertion blocks + per-function assertion totals
 - ``test_case``:      whether a walked function is a test case
 - ``dispatch``:       how much of the CCN is one dispatch on one value
+- ``terminal``:       how much of the function prints or prompts
 - ``deprecation``:    whether a function is marked deprecated
 - ``gating``:         whether a constant-false flag switches a function off
 - ``mock_walk``:      per-function mock-setup counting (test-quality)
@@ -190,6 +191,7 @@ def walk_file(
             raises,
             called,
             bare_called,
+            terminal,
         ) = _collect_assertion_facts(body, lmap, asserts)
         name = _find_function_entry_name(fn_node, lmap)
         typed, scalar = typed_param_counts(_parameter_list(fn_node), lmap)
@@ -219,6 +221,7 @@ def walk_file(
             bare_called_names=bare_called,
             dispatch_share=dispatch_share(dispatch.points, ccn),
             dispatch_arm=dispatch.arm,
+            terminal_share=terminal,
             deprecated=is_deprecated(fn_node, body, name, lmap, source),
             gated_off=body is not fn_node and is_gated_off(body, flags),
             deepest_block=(deepest[0], deepest[1]) if deepest else None,

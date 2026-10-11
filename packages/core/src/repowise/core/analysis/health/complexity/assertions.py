@@ -31,7 +31,7 @@ design (``asserts/lexicon.py`` carries the vocabulary and the evidence):
 
 ``called_names`` rides along on the same traversal. Alone among these it is
 collected **through** nested function bodies, because nothing else ever
-collects them.
+collects them. ``terminal_share`` (``terminal.py``) counts the same calls.
 """
 
 from __future__ import annotations
@@ -46,6 +46,7 @@ from .ast_utils import (
     _receiver_method_verdict,
 )
 from .languages import LanguageNodeMap
+from .terminal import is_terminal_call, terminal_share
 
 if TYPE_CHECKING:
     from tree_sitter import Node
@@ -343,8 +344,8 @@ def _is_oracle_raise(node: Node) -> bool:
 
 def _collect_assertion_facts(
     body_node: Node, lmap: LanguageNodeMap, dialect: AssertDialect | None = None
-) -> tuple[list[tuple[int, int, int]], int, int, int, frozenset[str], frozenset[str]]:
-    """``(blocks, total, verifications, raises, called, bare)`` for one body.
+) -> tuple[list[tuple[int, int, int]], int, int, int, frozenset[str], frozenset[str], float]:
+    """``(blocks, total, verifications, raises, called, bare, terminal)`` for one body.
 
     *blocks* are runs of ≥2 consecutive **narrow-tier** assertion statements,
     each recorded as ``(start_line, end_line, count)``. Runs are found per
@@ -392,16 +393,30 @@ def _collect_assertion_facts(
     function body twice. It counts nothing and so cannot move a calibrated
     marker. Empty under the early return above, which is fine only because the
     one reader ships no language that takes it.
+
+    *terminal* is :func:`terminal.terminal_share` over the same calls *called*
+    reads, nested bodies included.
     """
     if not lmap.assert_kinds and not lmap.assert_call_kinds:
-        return [], 0, 0, 0, frozenset(), frozenset()
+        return [], 0, 0, 0, frozenset(), frozenset(), 0.0
     blocks: list[tuple[int, int, int]] = []
     total = 0
     verifications = 0
     raises = 0
     called: set[str] = set()
     bare: set[str] = set()
+    # Calls read, and those on the terminal.
+    calls = [0, 0]
     call_kinds = lmap.call_kinds or lmap.assert_call_kinds
+
+    def _record_call(node: Node) -> None:
+        names = _callee_names(node)
+        if names is not None:
+            called.add(names[0])
+            if not names[1]:
+                bare.add(names[0])
+            calls[0] += 1
+            calls[1] += is_terminal_call(names[0], names[1])
 
     def _scan_siblings(parent: Node, *, count_total: bool) -> None:
         nonlocal total, verifications
@@ -452,11 +467,7 @@ def _collect_assertion_facts(
         if node.type in lmap.raise_kinds and not under_lambda and _is_oracle_raise(node):
             raises += 1
         if node.type in call_kinds:
-            names = _callee_names(node)
-            if names is not None:
-                called.add(names[0])
-                if not names[1]:
-                    bare.add(names[0])
+            _record_call(node)
         for child in node.children:
             child_under_lambda = under_lambda or child.type in lmap.lambda_kinds
             if child.type in lmap.function_kinds:
@@ -470,11 +481,7 @@ def _collect_assertion_facts(
 
     def _visit_names_only(node: Node) -> None:
         if node.type in call_kinds:
-            names = _callee_names(node)
-            if names is not None:
-                called.add(names[0])
-                if not names[1]:
-                    bare.add(names[0])
+            _record_call(node)
         for child in node.children:
             _visit_names_only(child)
 
@@ -492,4 +499,12 @@ def _collect_assertion_facts(
                 verifications += 1
             elif tier != _NOT_ASSERTION:
                 total += 1
-    return blocks, total, verifications, raises, frozenset(called), frozenset(bare)
+    return (
+        blocks,
+        total,
+        verifications,
+        raises,
+        frozenset(called),
+        frozenset(bare),
+        terminal_share(calls[1], calls[0]),
+    )

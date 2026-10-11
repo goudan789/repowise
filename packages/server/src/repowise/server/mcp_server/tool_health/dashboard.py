@@ -27,19 +27,20 @@ def build_dashboard(
     pop = data.pop
     all_metrics = pop.all_metrics
     findings = data.findings
-    all_modules = _module_rollups(all_metrics, data.deductions)
-    gap = _gap_analysis(all_metrics)
-    # KPIs keep test files unless ``scope`` narrows them. Tests score better
-    # than production code, so narrowing lowers the number with no new defect
-    # found: a caller should ask for it knowingly.
-    kpis = _compute_kpis(
-        all_metrics,
-        hotspot_paths=data.hotspot_paths,
-        performance_findings=data.perf_findings_count,
-        coverage=data.perf_coverage,
-        unanalysed=len(pop.unanalysed_paths),
+    wants = req.wants
+    all_modules = (
+        _module_rollups(all_metrics, data.deductions)
+        if wants("modules") or wants("modules_total")
+        else []
     )
-    result: dict[str, Any] = {
+    gap = (
+        _gap_analysis(all_metrics)
+        if wants("gap_analysis") or wants("high_leverage_files")
+        else {}
+    )
+    # A block is a thunk, built only when the projection keeps its key: a list
+    # call would otherwise pay for the whole dashboard and then drop it.
+    spec: dict[str, Any] = {
         # The one lead; every block below ranks and describes.
         **({"fix_first": _fix_first_block(data, req, pager)} if data.fix_first is not None else {}),
         "mode": "dashboard",
@@ -49,21 +50,34 @@ def build_dashboard(
         # Files in a language health has no dialect for: no score, so in no
         # figure here. Only said when there are some.
         **({"unanalysed_file_count": len(pop.unanalysed_paths)} if pop.unanalysed_paths else {}),
-        "kpis": kpis,
-        "distribution": health_distribution(all_metrics),
+        # KPIs keep test files unless ``scope`` narrows them. Tests score better
+        # than production code, so narrowing lowers the number with no new defect
+        # found: a caller should ask for it knowingly.
+        "kpis": lambda: _compute_kpis(
+            all_metrics,
+            hotspot_paths=data.hotspot_paths,
+            performance_findings=data.perf_findings_count,
+            coverage=data.perf_coverage,
+            unanalysed=len(pop.unanalysed_paths),
+        ),
+        "distribution": lambda: health_distribution(all_metrics),
         # Where the gap to the target concentrates: a short list of files.
-        "gap_analysis": gap,
+        "gap_analysis": lambda: gap,
         # Production files only: a test is never the worst file to work on.
         # Test files rank in their own list, as findings do.
-        "worst_files": pager.bound([_metric_row(data, m) for m in data.metric_rows], "worst_files"),
+        "worst_files": lambda: pager.bound(
+            [_metric_row(data, m) for m in data.metric_rows], "worst_files"
+        ),
         "worst_files_total": len(data.metric_rows),
-        "test_worst_files": pager.bound(
+        "test_worst_files": lambda: pager.bound(
             [_metric_row(data, m) for m in data.test_metric_rows], "test_worst_files"
         ),
         "test_worst_files_total": len(data.test_metric_rows),
-        "high_leverage_files": pager.bound(_high_leverage_rows(data, gap), "high_leverage_files"),
+        "high_leverage_files": lambda: pager.bound(
+            _high_leverage_rows(data, gap), "high_leverage_files"
+        ),
         "high_leverage_files_total": len(data.by_leverage),
-        "top_findings": pager.bound(
+        "top_findings": lambda: pager.bound(
             [
                 _serialize_finding(
                     f, data.reference_repository, findings.lower_priority.get(f.id)
@@ -75,7 +89,7 @@ def build_dashboard(
         "top_findings_total": findings.findings_total,
         **({"top_findings_counts": data.finding_counts} if data.finding_counts else {}),
         # The test half of the same ranked set, kept out of the production list.
-        "test_findings": pager.bound(
+        "test_findings": lambda: pager.bound(
             [
                 _serialize_finding(
                     f, data.reference_repository, findings.lower_priority.get(f.id)
@@ -86,8 +100,13 @@ def build_dashboard(
         ),
         "test_findings_total": findings.test_findings_total,
         # Worst-first, so the cap keeps the modules worth looking at.
-        "modules": pager.bound(all_modules, "modules"),
+        "modules": lambda: pager.bound(all_modules, "modules"),
         "modules_total": len(all_modules),
+    }
+    result: dict[str, Any] = {
+        key: value() if callable(value) else value
+        for key, value in spec.items()
+        if not callable(value) or wants(key)
     }
     if not req.only:
         _defer_to_secondary_rankings(result, req, data, len(all_modules))

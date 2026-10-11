@@ -20,6 +20,7 @@ from repowise.server.mcp_server._helpers import (
     _get_repo,
     _resolve_repo_context,
     filter_rows_by_attr,
+    plain_rows,
 )
 from repowise.server.mcp_server._meta import (
     build_meta_with_full_scope as _build_meta_with_full_scope,
@@ -246,12 +247,24 @@ _READING_ORDER_HINT = (
 )
 
 
+#: What git health and the ownership map read off each row. Every code file
+#: has one, so hydrating whole rows (their JSON history columns included) cost
+#: most of a warm overview on a large repository.
+_GIT_ROW_COLUMNS = (
+    GitMetadata.file_path,
+    GitMetadata.bus_factor,
+    GitMetadata.is_hotspot,
+    GitMetadata.commit_count_30d,
+    GitMetadata.commit_count_90d,
+    GitMetadata.primary_owner_email,
+    GitMetadata.primary_owner_name,
+)
+
+
 async def _load_git_rows(session: Any, repository: Any, exclude_spec: Any) -> list[Any]:
     """Git metadata rows outside the exclude rules, the source of git health and ownership."""
-    git_res = await session.execute(
-        select(GitMetadata).where(code_file_rows(repository.id))
-    )
-    return filter_rows_by_attr(list(git_res.scalars().all()), "file_path", exclude_spec)
+    git_res = await session.execute(select(*_GIT_ROW_COLUMNS).where(code_file_rows(repository.id)))
+    return filter_rows_by_attr(plain_rows(git_res), "file_path", exclude_spec)
 
 
 async def _requested_blocks(

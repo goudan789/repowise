@@ -275,7 +275,7 @@ class UnitFacts(Protocol):
 
     def cloned(self, path: str, shape: Mapping[str, int]) -> bool: ...
 
-    def evidence(self, path: str, symbol: str | None) -> bool: ...
+    def evidence(self, path: str, symbol: str | None) -> bool | None: ...
 
 
 def small(shape: Mapping[str, int]) -> bool:
@@ -298,8 +298,9 @@ def unit_verdict(
     that is mostly one dispatch on one value is usually fine as it is, unless
     a duplicate also sits in it; one on a small function is not worth an item.
     A print or prompt flow branches on what to show, so splitting it buys
-    little. A function under :func:`worth.large_function` leads only on
-    evidence that it costs something: it changes often or fixes land there.
+    little. A function under :func:`worth.large_function` in a file whose
+    history is known leads only on evidence that it costs something: it
+    changes often or fixes land there. Unknown history keeps it in.
     """
     if facts.unreachable(path, symbol, line):
         return Verdict("unreachable")
@@ -316,7 +317,11 @@ def unit_verdict(
         return Verdict("small_function")
     if terminal_shaped(shape):
         return Verdict("terminal_flow")
-    if _measured(shape) and not large_function(shape) and not facts.evidence(path, symbol):
+    if (
+        _measured(shape)
+        and not large_function(shape)
+        and facts.evidence(path, symbol) is False
+    ):
         return Verdict("moderate_quiet")
     return ELIGIBLE
 

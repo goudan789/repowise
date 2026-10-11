@@ -24,6 +24,9 @@ class _Facts:
     def cloned(self, path, shape):
         return False
 
+    def evidence(self, path, symbol):
+        return True
+
 
 def _cause(**over):
     row = {

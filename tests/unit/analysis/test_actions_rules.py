@@ -251,6 +251,10 @@ def test_a_folder_with_no_first_step_is_left_out_and_counted() -> None:
     assert out.reason == "1 folder left out: no file in it names a first step."
 
 
+def test_a_folder_whose_files_fix_first_names_has_no_first_step() -> None:
+    assert code._first_step((), {}) is None
+
+
 def test_engine_drops_fragile_rows_a_folder_absorbed() -> None:
     facts = _concentration_facts()
     # Sanity: on their own, the folder's files are fragile.

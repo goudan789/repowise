@@ -7,7 +7,7 @@ case where it must not.
 
 from __future__ import annotations
 
-from repowise.core.analysis.health.complexity.terminal import is_terminal_call
+from repowise.core.analysis.health.complexity.terminal import is_terminal_call, terminal_share
 from repowise.core.analysis.health.complexity.walker import walk_file
 from repowise.core.analysis.health.fix_first import build_fix_first
 from repowise.core.analysis.health.queue.value import HUB_SHARE, function_reach
@@ -57,6 +57,13 @@ def test_terminal_calls_are_read_by_name_and_receiver() -> None:
     assert not is_terminal_call("log", {"logger"})
     assert not is_terminal_call("write", {"handle"})
     assert not is_terminal_call("build_prompt", set())
+    for name in ("printer_for", "printable", "confirmed_order", "promptly", "echo_server_handle"):
+        assert not is_terminal_call(name, set()), name
+
+
+def test_a_function_with_few_calls_has_no_terminal_share() -> None:
+    assert terminal_share(2, 3) == 0.0
+    assert terminal_share(2, 4) == 0.5
 
 
 def test_the_walker_measures_a_status_command_and_not_a_resolver() -> None:
@@ -94,18 +101,22 @@ def test_a_print_flow_is_counted_out_and_a_logic_function_beside_it_stays() -> N
 _MODERATE = {"ccn": 45, "nloc": 120, "max_nesting": 6}
 
 
-def test_a_moderate_function_with_no_history_is_counted_out() -> None:
+def test_a_moderate_function_in_a_known_quiet_file_is_counted_out() -> None:
     queue = _queue([_metric("lib/parse.py")], [_size("lib/parse.py", "parse", **_MODERATE)])
     assert queue.items == ()
     assert queue.totals.excluded["moderate_quiet"] == 1
 
 
-def test_one_commit_everywhere_is_no_churn() -> None:
-    # A shallow clone: every file changed once, so the top fifth is everyone.
+def test_a_moderate_function_with_unknown_history_still_leads() -> None:
+    finding = _size("lib/parse.py", "parse", **_MODERATE)
+    # No commit count: no git, or a file git has not seen.
+    no_git = {**_metric("lib/parse.py"), "commit_count_90d": None}
+    assert _symbols(_queue([no_git], [finding])) == {"parse"}
+    # A shallow clone: every file changed once, so history tells files apart not at all.
     metrics = [_metric("lib/parse.py", commits=1), _metric("lib/other.py", commits=1)]
-    queue = build_fix_first(metrics=metrics, findings=[_size("lib/parse.py", "parse", **_MODERATE)],
-                            limit=None)
-    assert queue.totals.excluded["moderate_quiet"] == 1
+    shallow = build_fix_first(metrics=metrics, findings=[finding], limit=None)
+    assert _symbols(shallow) == {"parse"}
+    assert shallow.totals.excluded["moderate_quiet"] == 0
 
 
 def test_churn_bug_fixes_or_a_hotspot_on_the_function_let_it_lead() -> None:
@@ -158,7 +169,7 @@ def test_a_function_lost_in_a_hub_file_is_not_central() -> None:
 def test_size_markers_store_a_terminal_share_only_when_there_is_one() -> None:
     from repowise.core.analysis.health.biomarkers.base import shape_details
 
-    src = b"def a():\n    print(1)\n    run()\n\ndef b():\n    run()\n"
+    src = b"def a():\n    print(1)\n    run()\n    go()\n    print(2)\n\ndef b():\n    run()\n"
     fns = {f.name: f for f in walk_file("x.py", "python", src).functions}
     assert shape_details(fns["a"]) == {"dispatch_share": 0.0, "terminal_share": 0.5}
     assert shape_details(fns["b"]) == {"dispatch_share": 0.0}

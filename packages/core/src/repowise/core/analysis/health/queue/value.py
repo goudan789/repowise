@@ -35,6 +35,9 @@ GAIN_CCN = SIZE_CCN[0]
 PERF_CCN = SIZE_CCN[1]
 #: On a file in the top fifth by churn. History re-orders inside a band only.
 CHURN_WEIGHT = 1.25
+#: One change in 90 days is not changing often. Where the top fifth starts
+#: below this (a shallow clone, a young repository), history tells nothing.
+MIN_CHURN_COMMITS = 2
 
 
 def gain_value(gain: float, central: bool) -> int:
@@ -160,6 +163,7 @@ __all__ = [
     "GAIN_CCN",
     "GAIN_CUTS",
     "HUB_SHARE",
+    "MIN_CHURN_COMMITS",
     "PERF_CCN",
     "SIZE_SEVERE",
     "VALUE_MAX",

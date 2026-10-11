@@ -36,6 +36,7 @@ collects them. ``terminal_share`` (``terminal.py``) counts the same calls.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ..asserts.lexicon import NARROW_PREFIXES, STUB_EXCEPTIONS, AssertDialect
@@ -50,6 +51,14 @@ from .terminal import is_terminal_call, terminal_share
 
 if TYPE_CHECKING:
     from tree_sitter import Node
+
+@dataclass(slots=True)
+class _CallTally:
+    """Calls read in one body, and those on the terminal."""
+
+    calls: int = 0
+    terminal: int = 0
+
 
 _EXPRESSION_STATEMENT = "expression_statement"
 _AWAIT_WRAPPER_KINDS = ("await_expression", "await", "parenthesized_expression")
@@ -405,8 +414,7 @@ def _collect_assertion_facts(
     raises = 0
     called: set[str] = set()
     bare: set[str] = set()
-    # Calls read, and those on the terminal.
-    calls = [0, 0]
+    tally = _CallTally()
     call_kinds = lmap.call_kinds or lmap.assert_call_kinds
 
     def _record_call(node: Node) -> None:
@@ -415,8 +423,8 @@ def _collect_assertion_facts(
             called.add(names[0])
             if not names[1]:
                 bare.add(names[0])
-            calls[0] += 1
-            calls[1] += is_terminal_call(names[0], names[1])
+            tally.calls += 1
+            tally.terminal += is_terminal_call(names[0], names[1])
 
     def _scan_siblings(parent: Node, *, count_total: bool) -> None:
         nonlocal total, verifications
@@ -506,5 +514,5 @@ def _collect_assertion_facts(
         raises,
         frozenset(called),
         frozenset(bare),
-        terminal_share(calls[1], calls[0]),
+        terminal_share(tally.terminal, tally.calls),
     )

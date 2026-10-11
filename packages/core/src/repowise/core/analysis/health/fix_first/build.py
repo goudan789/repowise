@@ -57,6 +57,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from repowise.core.analysis.finding_registry import excluded_types
+from repowise.core.analysis.health.biomarkers.function_hotspot import FunctionHotspotDetector
+from repowise.core.analysis.health.biomarkers.prior_defect import PriorDefectDetector
 from repowise.core.analysis.health.complexity.dispatch import DISPATCH_SHARE
 from repowise.core.analysis.health.models import primary_finding, split_by_origin
 from repowise.core.analysis.health.queue.counts import COVERED_BY_PLAN, NOT_FILE_LEAD, Judgement
@@ -77,6 +79,7 @@ from repowise.core.analysis.health.queue.eligibility import (
 )
 from repowise.core.analysis.health.queue.order import LEVEL_RANK, order
 from repowise.core.analysis.health.queue.value import (
+    MIN_CHURN_COMMITS,
     function_reach,
     perf_confidence,
     perf_ready,
@@ -137,13 +140,6 @@ SIZE_BREAK_UP = WORTH_MAGNITUDE
 #: A file in the top fifth of production files by dependents is central (one
 #: value step); by churn it changes often (orders within a band only).
 HOT_QUANTILE = 0.8
-#: One change in 90 days is not changing often, even where most files changed
-#: once (a shallow clone, a young repository).
-MIN_CHURN_COMMITS = 2
-#: History that shows a function costs something: bug fixes in its file, or
-#: the function changing more than most in the repository.
-FIX_HISTORY_MARKER = "prior_defect"
-HOTSPOT_MARKER = "function_hotspot"
 MAX_FACTS = 5
 MAX_TESTS = 5
 MAX_STEPS = 5
@@ -290,6 +286,17 @@ class _Files:
             )
         self.churn_cut, self.deps_cut = cuts
         self.history = history
+        # History that shows a function costs something: bug fixes in its
+        # file, or the function changing more than most in the repository.
+        self.fixed = {
+            p for p, rows in history.items()
+            if any(field(f, "biomarker_type") == PriorDefectDetector.name for f in rows)
+        }
+        self.hotspots = {
+            p: {_tail(field(f, "function_name")) for f in rows
+                if field(f, "biomarker_type") == FunctionHotspotDetector.name}
+            for p, rows in history.items()
+        }
 
     def is_test(self, path: str) -> bool | None:
         """The stored flag; ``None`` when the file has no metric row or flag."""
@@ -318,24 +325,26 @@ class _Files:
     def churning(self, path: str) -> bool:
         return self.commits(path) >= max(self.churn_cut, MIN_CHURN_COMMITS)
 
-    def evidence(self, path: str, symbol: str | None) -> bool:
+    def evidence(self, path: str, symbol: str | None) -> bool | None:
         """Whether history shows work on ``symbol`` pays: its file changes
-        often or has bug fixes, or the function itself is a hotspot."""
-        if self.churning(path):
-            return True
+        often or has bug fixes, or the function itself is a hotspot.
+        ``None`` when the file's history is unknown: no commit count, or a
+        repository whose history does not tell files apart."""
         tail = _tail(symbol)
-        return any(
-            (marker := field(f, "biomarker_type")) == FIX_HISTORY_MARKER
-            or (marker == HOTSPOT_MARKER and tail and _tail(field(f, "function_name")) == tail)
-            for f in self.history.get(path, ())
-        )
+        if self.churning(path) or path in self.fixed or (tail and tail in self.hotspots.get(path, ())):
+            return True
+        known = field(self.by_path.get(path), "commit_count_90d") is not None
+        return False if known and self.churn_cut >= MIN_CHURN_COMMITS else None
 
     def reach(
-        self, path: str, shape: Mapping[str, int], dependents: int | None = None
+        self, path: str, shape: Mapping[str, int], dependents: int | None, *, sized: bool
     ) -> tuple[int | None, bool]:
-        """The importers a function in ``path`` is credited with
-        (``queue.value.function_reach``), and whether that makes it central."""
+        """The importers a unit in ``path`` is credited with, and whether that
+        makes it central: a function-size unit's are ``queue.value.function_reach``,
+        any other unit's are its file's."""
         deps = self.dependents(path) if dependents is None else dependents
+        if not sized:
+            return deps, self.central(path)
         credited = function_reach(deps, measured_nloc(shape), self.nloc(path))
         if credited == deps:
             return deps, self.central(path)
@@ -846,9 +855,7 @@ class _RefactorPlan:
         deps = details.get("dependents")
         deps = files.dependents(path) if deps is None else deps
         function_size = lead_type == "extract_method"
-        credited, central = (
-            files.reach(path, shape, deps) if function_size else (deps, files.central(path))
-        )
+        credited, central = files.reach(path, shape, deps, sized=function_size)
         rank = _ShapeRank(
             shape,
             central,
@@ -1300,7 +1307,7 @@ def _finding_rank(finding: Any, files: _Files) -> _ShapeRank:
     shape = files.shape(path, field(finding, "function_name"))
     deps = files.dependents(path)
     sized = marker in SIZE_MARKERS
-    credited, central = files.reach(path, shape, deps) if sized else (deps, files.central(path))
+    credited, central = files.reach(path, shape, deps, sized=sized)
     return _ShapeRank(
         shape,
         central,

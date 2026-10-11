@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import cache
 from typing import Any
 
 from repowise.core.analysis.health.aggregation import module_rollups as _module_rollups
@@ -24,23 +25,46 @@ def build_dashboard(
     The rollup rides along so the overview page needs no second round-trip.
     ``by_leverage`` is built in ``loading``, before the leads.
     """
+    # A block is a thunk, built only when the projection keeps its key: a list
+    # call would otherwise pay for the whole dashboard and then drop it.
+    result: dict[str, Any] = {
+        key: value() if callable(value) else value
+        for key, value in _dashboard_blocks(data, req, pager).items()
+        if not callable(value) or _kept(req, key)
+    }
+    modules_total = result.get("modules_total", 0)
+    if not req.only:
+        _defer_to_secondary_rankings(result, req, data, modules_total)
+    if "churn_complexity" in req.include_set:
+        result["churn_complexity"] = pager.bound(data.churn_points, "churn_complexity")
+    if "accuracy" in req.include_set:
+        # Does the score rank the buggy files first? Scored over the full open
+        # set, not the capped head, which would be circular.
+        result["defect_accuracy"] = compute_defect_accuracy(
+            data.pop.all_metrics,
+            [_serialize_finding(f, data.reference_repository) for f in data.accuracy_rows],
+            # Same map ``all_metrics`` was ranked with, so it scores these ``worst_files``.
+            deductions=data.deductions,
+        )
+    return result, ModeTotals(metrics=None, trends=None, modules=modules_total)
+
+
+def _kept(req: HealthRequest, key: str) -> bool:
+    """Whether the projection keeps *key*; a ``*_total`` rides with its list."""
+    return req.wants(key) or (key.endswith("_total") and req.wants(key.removesuffix("_total")))
+
+
+def _dashboard_blocks(data: HealthData, req: HealthRequest, pager: Pager) -> dict[str, Any]:
+    """Every dashboard key in payload order: a value, or a thunk that builds it.
+
+    A thunk two blocks share is memoised, so it is built once or not at all.
+    """
     pop = data.pop
     all_metrics = pop.all_metrics
     findings = data.findings
-    wants = req.wants
-    all_modules = (
-        _module_rollups(all_metrics, data.deductions)
-        if wants("modules") or wants("modules_total")
-        else []
-    )
-    gap = (
-        _gap_analysis(all_metrics)
-        if wants("gap_analysis") or wants("high_leverage_files")
-        else {}
-    )
-    # A block is a thunk, built only when the projection keeps its key: a list
-    # call would otherwise pay for the whole dashboard and then drop it.
-    spec: dict[str, Any] = {
+    modules = cache(lambda: _module_rollups(all_metrics, data.deductions))
+    gap = cache(lambda: _gap_analysis(all_metrics))
+    return {
         # The one lead; every block below ranks and describes.
         **({"fix_first": _fix_first_block(data, req, pager)} if data.fix_first is not None else {}),
         "mode": "dashboard",
@@ -62,7 +86,7 @@ def build_dashboard(
         ),
         "distribution": lambda: health_distribution(all_metrics),
         # Where the gap to the target concentrates: a short list of files.
-        "gap_analysis": lambda: gap,
+        "gap_analysis": gap,
         # Production files only: a test is never the worst file to work on.
         # Test files rank in their own list, as findings do.
         "worst_files": lambda: pager.bound(
@@ -74,54 +98,19 @@ def build_dashboard(
         ),
         "test_worst_files_total": len(data.test_metric_rows),
         "high_leverage_files": lambda: pager.bound(
-            _high_leverage_rows(data, gap), "high_leverage_files"
+            _high_leverage_rows(data, gap()), "high_leverage_files"
         ),
         "high_leverage_files_total": len(data.by_leverage),
-        "top_findings": lambda: pager.bound(
-            [
-                _serialize_finding(
-                    f, data.reference_repository, findings.lower_priority.get(f.id)
-                )
-                for f in findings.finding_rows
-            ],
-            "top_findings",
-        ),
+        "top_findings": lambda: pager.bound(_finding_rows(data, findings.finding_rows), "top_findings"),
         "top_findings_total": findings.findings_total,
         **({"top_findings_counts": data.finding_counts} if data.finding_counts else {}),
         # The test half of the same ranked set, kept out of the production list.
-        "test_findings": lambda: pager.bound(
-            [
-                _serialize_finding(
-                    f, data.reference_repository, findings.lower_priority.get(f.id)
-                )
-                for f in findings.test_finding_rows
-            ],
-            "test_findings",
-        ),
+        "test_findings": lambda: pager.bound(_finding_rows(data, findings.test_finding_rows), "test_findings"),
         "test_findings_total": findings.test_findings_total,
         # Worst-first, so the cap keeps the modules worth looking at.
-        "modules": lambda: pager.bound(all_modules, "modules"),
-        "modules_total": len(all_modules),
+        "modules": lambda: pager.bound(modules(), "modules"),
+        "modules_total": lambda: len(modules()),
     }
-    result: dict[str, Any] = {
-        key: value() if callable(value) else value
-        for key, value in spec.items()
-        if not callable(value) or wants(key)
-    }
-    if not req.only:
-        _defer_to_secondary_rankings(result, req, data, len(all_modules))
-    if "churn_complexity" in req.include_set:
-        result["churn_complexity"] = pager.bound(data.churn_points, "churn_complexity")
-    if "accuracy" in req.include_set:
-        # Does the score rank the buggy files first? Scored over the full open
-        # set, not the capped head, which would be circular.
-        result["defect_accuracy"] = compute_defect_accuracy(
-            all_metrics,
-            [_serialize_finding(f, data.reference_repository) for f in data.accuracy_rows],
-            # Same map ``all_metrics`` was ranked with, so it scores these ``worst_files``.
-            deductions=data.deductions,
-        )
-    return result, ModeTotals(metrics=None, trends=None, modules=len(all_modules))
 
 
 def _fix_first_block(data: HealthData, req: HealthRequest, pager: Pager) -> dict[str, Any]:
@@ -162,6 +151,11 @@ def _fix_first_block(data: HealthData, req: HealthRequest, pager: Pager) -> dict
             limit=req.fix_first_cap,
         )
     return block
+
+
+def _finding_rows(data: HealthData, rows: list[Any]) -> list[dict[str, Any]]:
+    labels = data.findings.lower_priority
+    return [_serialize_finding(f, data.reference_repository, labels.get(f.id)) for f in rows]
 
 
 def _metric_row(data: HealthData, m: Any) -> dict[str, Any]:

@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.pool import StaticPool
 
 from repowise.core.persistence.crud import code_file_rows
+from repowise.core.persistence.crud.analysis.plain_rows import plain_rows
 from repowise.core.persistence.database import get_session
 from repowise.core.persistence.models import GitMetadata
 from repowise.core.registry import mcp_tool_registry as mcp
@@ -20,7 +21,6 @@ from repowise.server.mcp_server._helpers import (
     _get_repo,
     _resolve_repo_context,
     filter_rows_by_attr,
-    plain_rows,
 )
 from repowise.server.mcp_server._meta import (
     build_meta_with_full_scope as _build_meta_with_full_scope,

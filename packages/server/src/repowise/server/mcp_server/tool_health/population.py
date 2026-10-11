@@ -12,12 +12,9 @@ from repowise.core.analysis.health.counts import project as project_counts
 from repowise.core.analysis.health.models import split_by_origin
 from repowise.core.analysis.health.rows import scored_rows
 from repowise.core.analysis.health.scope import parse_scope
+from repowise.core.persistence.crud.analysis.plain_rows import plain_rows
 from repowise.core.persistence.models import HealthFileMetric
-from repowise.server.mcp_server._helpers import (
-    _get_exclude_spec,
-    filter_rows_by_attr,
-    plain_rows,
-)
+from repowise.server.mcp_server._helpers import _get_exclude_spec, filter_rows_by_attr
 from repowise.server.mcp_server.tool_health.request import HealthRequest
 from repowise.server.mcp_server.tool_health.targets import _expand_module_targets
 

@@ -12,7 +12,8 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 #: Types already found to be read by attribute, so a row of one skips both
-#: ``isinstance`` checks on every later read.
+#: ``isinstance`` checks on every later read. Bounded by the distinct row
+#: classes a process reads.
 _ATTRIBUTE_TYPES: set[type] = set()
 
 

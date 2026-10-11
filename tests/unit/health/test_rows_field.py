@@ -14,6 +14,12 @@ class _Metric:
     score: float
 
 
+class _Settings(dict):
+    """A ``dict`` subclass: read as a mapping, not by attribute."""
+
+    file_path = "attribute, not key"
+
+
 class _Pairs(tuple):
     """A tuple subclass that also has a ``get``: read by attribute, as a tuple."""
 
@@ -26,6 +32,7 @@ def test_each_shape_reads_the_same_on_every_call() -> None:
     rows = [
         {"file_path": "a.py", "score": 1.0},
         UserDict({"file_path": "a.py", "score": 1.0}),
+        _Settings({"file_path": "a.py", "score": 1.0}),
         Row("a.py", 1.0),
         _Metric("a.py", 1.0),
     ]

@@ -8,8 +8,8 @@ from typing import Any
 from sqlalchemy import select
 
 from repowise.core.analysis.health.worth import LOW_PRIORITY_LABEL, finding_priorities
+from repowise.core.persistence.crud.analysis.plain_rows import plain_rows
 from repowise.core.persistence.models import HealthFinding
-from repowise.server.mcp_server._helpers import plain_rows
 from repowise.server.mcp_server.tool_health.population import Population
 from repowise.server.mcp_server.tool_health.request import HealthRequest
 from repowise.server.mcp_server.tool_health.serialize import _rank_emitted

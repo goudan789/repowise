@@ -5,9 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections import namedtuple
 from collections.abc import Collection
-from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -666,21 +664,6 @@ def is_excluded(path: str | None, spec: Any) -> bool:
     from repowise.core.exclusion import is_excluded as _core_is_excluded
 
     return _core_is_excluded(path, spec)
-
-
-@cache
-def _plain_row_type(names: tuple[str, ...]) -> type:
-    return namedtuple("PlainRow", names)  # type: ignore[misc]
-
-
-def plain_rows(result: Any) -> list[Any]:
-    """Each row of a column select as a named tuple.
-
-    For a fold over every row of a large table: a tuple's attributes read in
-    C, while a SQLAlchemy ``Row`` or entity resolves each one in Python.
-    """
-    make = _plain_row_type(tuple(result.keys()))._make
-    return [make(row) for row in result]
 
 
 def filter_rows_by_attr(rows: list, attr: str, spec: Any) -> list:

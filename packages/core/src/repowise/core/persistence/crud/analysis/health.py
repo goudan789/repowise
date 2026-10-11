@@ -47,6 +47,7 @@ from ...models import (
     _now_utc,
 )
 from .._shared import _BATCH_SIZE
+from .plain_rows import plain_rows
 
 
 def _health_finding_row_kwargs(finding: Any, repository_id: str) -> dict:
@@ -717,10 +718,13 @@ def _rounded(value: float | None) -> float | None:
 
 async def _open_finding_totals_rows(session: AsyncSession, repository_id: str) -> list[Any]:
     """The open findings :func:`get_health_findings` returns, narrowed to the
-    columns the summary totals read, in impact order.
+    columns the summary totals read.
 
     The summary sums and counts these; it never reads their tier, so it skips
-    the details column and the tiering pass over every open row.
+    the details column and the tiering pass over every open row. Impact order
+    is deliberate: per-file deductions are summed in the order the MCP
+    dashboard sums them, so both name the same worst file; ``id`` makes the
+    order total.
     """
     rows = await session.execute(
         select(HealthFinding.file_path, HealthFinding.health_impact, HealthFinding.dimension)
@@ -729,10 +733,10 @@ async def _open_finding_totals_rows(session: AsyncSession, repository_id: str) -
             HealthFinding.status == "open",
             HealthFinding.biomarker_type.not_in(excluded_types()),
         )
-        .order_by(HealthFinding.health_impact.desc())
+        .order_by(HealthFinding.health_impact.desc(), HealthFinding.id)
     )
     return _filter_excluded_paths(
-        list(rows.all()), await _health_exclude_spec(session, repository_id)
+        plain_rows(rows), await _health_exclude_spec(session, repository_id)
     )
 
 

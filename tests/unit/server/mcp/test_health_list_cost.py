@@ -38,8 +38,13 @@ async def test_a_call_that_prints_no_finding_never_tiers_one(
     setup_mcp, health_data, monkeypatch, args, kept
 ):
     from repowise.server.mcp_server import get_health
+    from repowise.server.mcp_server.tool_health.request import HealthRequest
 
-    expected = await get_health(**args)
+    # The payload every call had when it always tiered: totals, secondary
+    # rankings and every kept block must match it.
+    with monkeypatch.context() as always:
+        always.setattr(HealthRequest, "ranks_findings", property(lambda _self: True))
+        expected = await get_health(**args)
     _forbid(monkeypatch, findings_mod, "finding_priorities")
     result = await get_health(**args)
     assert kept in result
